@@ -201,6 +201,7 @@ function registerHandlers(io) {
                     playerName,
                     correctAnswer: room.gameState.currentQuestion.correctAnswer,
                 });
+                io.to(info.roomCode).emit('lobby_updated', sanitizeRoom(room));
             } else {
                 cb({ success: true, correct: false });
                 socket.emit('answer_result', {
