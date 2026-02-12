@@ -18,6 +18,15 @@ const { getNextQuestion, checkAnswer, addTrivia, editTrivia, deleteTrivia } = re
 // Map socketId → { roomCode, playerId }
 const socketMap = new Map();
 
+/**
+ * Calculate answer delay (in seconds) based on correct-answer streak.
+ * 0-1 streak → 0s, 2 → 2s, 3 → 3s, 4+ → 4s (capped)
+ */
+function getStreakDelay(streak) {
+    if (streak <= 1) return 0;
+    return Math.min(streak, 4);
+}
+
 function registerHandlers(io) {
     io.on('connection', (socket) => {
         console.log(`[Socket] Connected: ${socket.id}`);
@@ -174,6 +183,16 @@ function registerHandlers(io) {
             if (room.gameState.answeredPlayers.has(socket.id))
                 return cb({ success: false, error: 'Already answered' });
 
+            // Enforce streak delay
+            const streak = room.gameState.streaks[socket.id] || 0;
+            const delay = getStreakDelay(streak);
+            if (delay > 0 && room.gameState.questionStartTime) {
+                const elapsed = Date.now() - room.gameState.questionStartTime;
+                if (elapsed < delay * 1000) {
+                    return cb({ success: false, error: 'Streak cooldown active — wait a moment!' });
+                }
+            }
+
             room.gameState.answeredPlayers.add(socket.id);
 
             const correct = checkAnswer(
@@ -201,6 +220,15 @@ function registerHandlers(io) {
                     playerName,
                     correctAnswer: room.gameState.currentQuestion.correctAnswer,
                 });
+
+                // Update streaks: increment for winner, reset everyone else
+                room.gameState.streaks[socket.id] = (room.gameState.streaks[socket.id] || 0) + 1;
+                room.players.forEach((p) => {
+                    if (p.id !== socket.id) {
+                        room.gameState.streaks[p.id] = 0;
+                    }
+                });
+
                 io.to(info.roomCode).emit('lobby_updated', sanitizeRoom(room));
             } else {
                 cb({ success: true, correct: false });
@@ -452,10 +480,23 @@ function sendQuestion(io, room) {
 
     io.to(room.code).emit('lobby_updated', sanitizeRoom(room));
 
-    io.to(room.code).emit('trivia_question', {
-        questionText: question.questionText,
-        timeLimit: question.timeLimit,
-    });
+    // Record when the question was sent for streak delay enforcement
+    room.gameState.questionStartTime = Date.now();
+
+    // Send per-player streak delay along with the question
+    const roomSockets = io.sockets.adapter.rooms.get(room.code);
+    if (roomSockets) {
+        for (const sid of roomSockets) {
+            const streak = room.gameState.streaks[sid] || 0;
+            const streakDelay = getStreakDelay(streak);
+            io.to(sid).emit('trivia_question', {
+                questionText: question.questionText,
+                timeLimit: question.timeLimit,
+                streakDelay,
+                streak,
+            });
+        }
+    }
 
     console.log('[Game] Question emitted successfully');
 

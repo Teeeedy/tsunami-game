@@ -81,6 +81,8 @@ function initGameState(room) {
         questionIndex: 0,
         answeredPlayers: new Set(),
         questionTimeout: null,
+        streaks: {}, // playerId -> consecutive correct answer count
+        questionStartTime: null, // timestamp when question was sent
     };
     // Reset all player scores
     room.players.forEach((p) => {

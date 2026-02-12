@@ -16,6 +16,7 @@ export default function GameScreen() {
     const [timeLeft, setTimeLeft] = useState(0);
     const [showToast, setShowToast] = useState(false);
     const [toastContent, setToastContent] = useState(null);
+    const [streakCooldown, setStreakCooldown] = useState(0);
 
     const myId = socket.id;
     const gs = room?.gameState;
@@ -43,6 +44,29 @@ export default function GameScreen() {
             return () => clearInterval(timer);
         }
     }, [currentQuestion, phase]);
+
+    // Streak cooldown countdown
+    useEffect(() => {
+        if (currentQuestion?.streakDelay && currentQuestion.streakDelay > 0) {
+            setStreakCooldown(currentQuestion.streakDelay);
+        } else {
+            setStreakCooldown(0);
+        }
+    }, [currentQuestion]);
+
+    useEffect(() => {
+        if (streakCooldown <= 0) return;
+        const timer = setInterval(() => {
+            setStreakCooldown((prev) => {
+                if (prev <= 1) {
+                    clearInterval(timer);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [streakCooldown > 0]);
 
     // Show toast on card flip
     useEffect(() => {
@@ -162,7 +186,18 @@ export default function GameScreen() {
                                     />
                                 </div>
                                 <div className="question-text">{currentQuestion.questionText}</div>
-                                {!hasAnswered && (
+                                {!hasAnswered && streakCooldown > 0 && (
+                                    <div className="streak-cooldown">
+                                        <span>🔥 Streak delay! You can answer in <strong>{streakCooldown}s</strong></span>
+                                        <div className="streak-bar-container">
+                                            <div
+                                                className="streak-bar"
+                                                style={{ width: `${(streakCooldown / (currentQuestion.streakDelay || 1)) * 100}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                                {!hasAnswered && streakCooldown <= 0 && (
                                     <div className="answer-row">
                                         <input
                                             className="input"
