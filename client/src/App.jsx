@@ -43,6 +43,18 @@ export default function App() {
         socket.on('trivia_question', (question) => {
             setCurrentQuestion(question);
             setAnswerResult(null);
+            // Force phase update to "question" so UI shows the trivia panel
+            const room = useGameStore.getState().room;
+            if (room && room.gameState) {
+                setRoom({
+                    ...room,
+                    gameState: {
+                        ...room.gameState,
+                        phase: 'question',
+                        turnPlayerId: null,
+                    },
+                });
+            }
         });
 
         socket.on('answer_result', (result) => {
