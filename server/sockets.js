@@ -250,10 +250,13 @@ function registerHandlers(io) {
             const result = applyCardEffect(room, socket.id, resolveIndex, targetPlayerId);
             if (result.error) return cb({ success: false, error: result.error });
 
+            room.gameState.turnPlayerId = null;
+            room.gameState.phase = 'resolving';
             delete room.gameState._pendingCardIndex;
             cb({ success: true, result });
 
             io.to(info.roomCode).emit('card_flipped', result);
+            io.to(info.roomCode).emit('lobby_updated', sanitizeRoom(room));
             io.to(info.roomCode).emit('score_update', {
                 players: room.players.map((p) => ({
                     id: p.id,
@@ -298,10 +301,13 @@ function registerHandlers(io) {
             const result = applyCardEffect(room, socket.id, cardIndex, targetPlayerId);
             if (result.error) return cb({ success: false, error: result.error });
 
+            room.gameState.turnPlayerId = null;
+            room.gameState.phase = 'resolving';
             delete room.gameState._pendingCardIndex;
             cb({ success: true, result });
 
             io.to(info.roomCode).emit('card_flipped', result);
+            io.to(info.roomCode).emit('lobby_updated', sanitizeRoom(room));
             io.to(info.roomCode).emit('score_update', {
                 players: room.players.map((p) => ({
                     id: p.id,
