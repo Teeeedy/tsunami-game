@@ -5,7 +5,8 @@
 
 function generateDeck() {
     const cards = [
-        // Positive Cards (7)
+        // Positive Cards (16)
+        { type: 'gain', value: 50, label: '+50' },
         { type: 'gain', value: 50, label: '+50' },
         { type: 'gain', value: 100, label: '+100' },
         { type: 'gain', value: 100, label: '+100' },
@@ -13,27 +14,50 @@ function generateDeck() {
         { type: 'gain', value: 200, label: '+200' },
         { type: 'gain', value: 200, label: '+200' },
         { type: 'gain', value: 200, label: '+200' },
-        // Negative Cards (7)
+        { type: 'gain', value: 300, label: '+300' },
+        { type: 'gain', value: 300, label: '+300' },
+        { type: 'gain', value: 300, label: '+300' },
+        { type: 'gain', value: 400, label: '+400' },
+        { type: 'gain', value: 400, label: '+400' },
+        { type: 'gain', value: 400, label: '+400' },
+        { type: 'gain', value: 500, label: '+500' },
+        { type: 'gain', value: 500, label: '+500' },
+        // Negative Cards (9)
+        { type: 'lose', value: 50, label: '-50' },
         { type: 'lose', value: 50, label: '-50' },
         { type: 'lose', value: 100, label: '-100' },
         { type: 'lose', value: 100, label: '-100' },
-        { type: 'lose', value: 100, label: '-100' },
         { type: 'lose', value: 200, label: '-200' },
         { type: 'lose', value: 200, label: '-200' },
         { type: 'lose', value: 200, label: '-200' },
-        // Interaction Cards (5)
+        { type: 'lose', value: 300, label: '-300' },
+        { type: 'lose', value: 400, label: '-400' },
+        // Interaction Cards (10)
         { type: 'steal', value: 100, label: 'Steal 100' },
         { type: 'steal', value: 100, label: 'Steal 100' },
         { type: 'steal', value: 200, label: 'Steal 200' },
         { type: 'steal', value: 200, label: 'Steal 200' },
-        { type: 'steal', value: 200, label: 'Steal 200' },
-        // Modifier Cards (3)
+        { type: 'steal', value: 300, label: 'Steal 300' },
+        { type: 'give', value: 100, label: 'Give 100' },
+        { type: 'give', value: 100, label: 'Give 100' },
+        { type: 'give', value: 200, label: 'Give 200' },
+        { type: 'give', value: 200, label: 'Give 200' },
+        { type: 'give', value: 300, label: 'Give 300' },
+        // Modifier Cards (7)
+        { type: 'double', value: 0, label: 'DOUBLE' },
+        { type: 'double', value: 0, label: 'DOUBLE' },
         { type: 'double', value: 0, label: 'DOUBLE' },
         { type: 'double', value: 0, label: 'DOUBLE' },
         { type: 'reverse', value: 0, label: 'REVERSE' },
-        // Rare Cards (3)
+        { type: 'reverse', value: 0, label: 'REVERSE' },
+        { type: 'reverse', value: 0, label: 'REVERSE' },
+        // Rare Cards (7)
         { type: 'tsunami', value: 0, label: 'TSUNAMI' },
         { type: 'tsunami', value: 0, label: 'TSUNAMI' },
+        { type: 'tsunami', value: 0, label: 'TSUNAMI' },
+        { type: 'swap', value: 0, label: 'SWAP' },
+        { type: 'swap', value: 0, label: 'SWAP' },
+        { type: 'swap', value: 0, label: 'SWAP' },
         { type: 'swap', value: 0, label: 'SWAP' },
     ];
 
@@ -183,6 +207,42 @@ function applyCardEffect(room, playerId, cardIndex, targetPlayerId) {
             break;
         }
 
+        case 'give': {
+            const target = room.players.find((p) => p.id === targetPlayerId);
+            if (!target) return { error: 'Target player not found' };
+            let amount = card.value;
+            if (modifier === 'double') amount *= 2;
+            if (modifier === 'reverse') {
+                // Reverse: give becomes steal
+                const actualSteal = Math.min(amount, target.score);
+                target.score -= actualSteal;
+                player.score += actualSteal;
+                result.effects.push({
+                    type: 'steal',
+                    playerId,
+                    playerName: player.name,
+                    targetId: targetPlayerId,
+                    targetName: target.name,
+                    amount: actualSteal,
+                    description: `${player.name} steals ${actualSteal} from ${target.name} (reversed give!)`,
+                });
+            } else {
+                player.score -= amount;
+                target.score += amount;
+                result.effects.push({
+                    type: 'give',
+                    playerId,
+                    playerName: player.name,
+                    targetId: targetPlayerId,
+                    targetName: target.name,
+                    amount,
+                    description: `${player.name} gives ${amount} to ${target.name}${modifier === 'double' ? ' (doubled!)' : ''}`,
+                });
+            }
+            gs.activeModifier = null;
+            break;
+        }
+
         case 'double': {
             gs.activeModifier = 'double';
             result.effects.push({
@@ -297,7 +357,7 @@ function applyCardEffect(room, playerId, cardIndex, targetPlayerId) {
  * Check if a card type requires target selection
  */
 function cardRequiresTarget(cardType) {
-    return ['steal', 'tsunami', 'swap'].includes(cardType);
+    return ['steal', 'tsunami', 'swap', 'give'].includes(cardType);
 }
 
 module.exports = {

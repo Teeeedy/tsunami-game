@@ -89,6 +89,7 @@ export default function GameScreen() {
             gain: 'card-gain',
             lose: 'card-lose',
             steal: 'card-steal',
+            give: 'card-lose',
             double: 'card-double',
             reverse: 'card-reverse',
             tsunami: 'card-tsunami',
@@ -257,6 +258,7 @@ export default function GameScreen() {
                                 {targetSelectInfo.cardType === 'steal' && '🎯 Choose who to steal from'}
                                 {targetSelectInfo.cardType === 'tsunami' && '🌊 Choose TSUNAMI target'}
                                 {targetSelectInfo.cardType === 'swap' && '🔄 Choose who to swap with'}
+                                {targetSelectInfo.cardType === 'give' && '🎁 Choose who to give points to'}
                             </h2>
                             <p>Select a player to target with your {targetSelectInfo.label} card.</p>
                             <div className="target-list">
