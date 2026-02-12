@@ -89,6 +89,7 @@ function applyCardEffect(room, playerId, cardIndex, targetPlayerId) {
         playerName: player.name,
         modifier,
         effects: [],
+        gameOver: false,
     };
 
     switch (card.type) {

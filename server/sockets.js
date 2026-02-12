@@ -275,8 +275,16 @@ function registerHandlers(io) {
                     })),
                 });
             } else {
+                console.log('[Game] Scheduling next question in 2s', {
+                    roomCode: info.roomCode,
+                    phase: room.gameState.phase,
+                    status: room.status,
+                    cardsRemaining: room.gameState.board.filter(c => !c.flipped).length
+                });
+
                 // Next question after a short delay
                 setTimeout(() => {
+                    console.log('[Game] Sending next question now');
                     room.gameState.phase = 'question';
                     sendQuestion(io, room);
                 }, 2000);
@@ -326,7 +334,15 @@ function registerHandlers(io) {
                     })),
                 });
             } else {
+                console.log('[Game] Scheduling next question in 2s', {
+                    roomCode: info.roomCode,
+                    phase: room.gameState.phase,
+                    status: room.status,
+                    cardsRemaining: room.gameState.board.filter(c => !c.flipped).length
+                });
+
                 setTimeout(() => {
+                    console.log('[Game] Sending next question now');
                     room.gameState.phase = 'question';
                     sendQuestion(io, room);
                 }, 2000);
@@ -376,7 +392,16 @@ function handleLeave(socket, io) {
 }
 
 function sendQuestion(io, room) {
-    if (!room.gameState || room.status !== 'playing') return;
+    console.log('[Game] sendQuestion called', {
+        hasGameState: !!room.gameState,
+        status: room.status,
+        roomCode: room.code
+    });
+
+    if (!room.gameState || room.status !== 'playing') {
+        console.log('[Game] ❌ Blocked from sending question');
+        return;
+    }
 
     const question = getNextQuestion(room);
     room.gameState.currentQuestion = question;
@@ -384,10 +409,21 @@ function sendQuestion(io, room) {
     room.gameState.turnPlayerId = null;
     room.gameState.phase = 'question';
 
+    console.log('[Game] ✅ Emitting trivia_question:', {
+        roomCode: room.code,
+        questionText: question.questionText,
+        timeLimit: question.timeLimit,
+        connectedClients: io.sockets.adapter.rooms.get(room.code)?.size
+    });
+
+    io.to(room.code).emit('lobby_updated', sanitizeRoom(room));
+
     io.to(room.code).emit('trivia_question', {
         questionText: question.questionText,
         timeLimit: question.timeLimit,
     });
+
+    console.log('[Game] Question emitted successfully');
 
     // Auto-skip if nobody answers in time
     room.gameState.questionTimeout = setTimeout(() => {
