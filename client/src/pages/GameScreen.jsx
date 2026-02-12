@@ -21,6 +21,7 @@ export default function GameScreen() {
     const gs = room?.gameState;
     const phase = gs?.phase || 'question';
     const isMyTurn = gs?.turnPlayerId === myId;
+    const isHost = room?.hostId === myId;
     const board = gs?.board || [];
     const players = room?.players || [];
     const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
@@ -84,6 +85,15 @@ export default function GameScreen() {
         });
     };
 
+    const handleEndGame = () => {
+        if (!confirm('Are you sure you want to end the game?')) return;
+        socket.emit('end_game', null, (res) => {
+            if (res && !res.success) {
+                console.error('Failed to end game:', res.error);
+            }
+        });
+    };
+
     const getCardTypeClass = (type) => {
         const map = {
             gain: 'card-gain',
@@ -124,6 +134,15 @@ export default function GameScreen() {
                         >
                             {gs.activeModifier === 'double' ? '⚡ DOUBLE ACTIVE' : '🔄 REVERSE ACTIVE'}
                         </span>
+                    )}
+                    {isHost && (
+                        <button
+                            className="btn btn-danger btn-sm"
+                            onClick={handleEndGame}
+                            id="end-game-btn"
+                        >
+                            End Game
+                        </button>
                     )}
                 </div>
             </div>

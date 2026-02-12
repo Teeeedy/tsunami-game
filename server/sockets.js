@@ -369,6 +369,40 @@ function registerHandlers(io) {
             io.to(info.roomCode).emit('lobby_updated', sanitizeRoom(room));
         });
 
+        socket.on('end_game', (_, callback) => {
+            const info = socketMap.get(socket.id);
+            const cb = callback || (() => { });
+            if (!info) return cb({ success: false, error: 'Not in a room' });
+
+            const room = getRoom(info.roomCode);
+            if (!room) return cb({ success: false, error: 'Room not found' });
+            if (room.hostId !== socket.id)
+                return cb({ success: false, error: 'Only host can end the game' });
+            if (room.status !== 'playing')
+                return cb({ success: false, error: 'No active game to end' });
+
+            // Clear any pending question timeout
+            if (room.gameState && room.gameState.questionTimeout) {
+                clearTimeout(room.gameState.questionTimeout);
+                room.gameState.questionTimeout = null;
+            }
+
+            room.status = 'finished';
+            if (room.gameState) room.gameState.phase = 'finished';
+
+            const winner = [...room.players].sort((a, b) => b.score - a.score)[0];
+
+            cb({ success: true });
+            io.to(info.roomCode).emit('game_over', {
+                winner,
+                players: room.players.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    score: p.score,
+                })),
+            });
+        });
+
         // ─── DISCONNECT ───
 
         socket.on('disconnect', () => {
