@@ -76,11 +76,12 @@ Open `http://localhost:3001`.
 
 ### Option 2: Manual Setup
 1. **New Web Service** on Render
-2. **Build Command:** `npm install && cd client && npm install && npm run build`
-3. **Start Command:** `node server/index.js`
-4. **Environment:** Node
+2. Connect your repo (`Teeeedy/tsunami-game`)
+3. **Build Command:** `npm run build`  <-- **IMPORTANT: Change this from the default `npm install`**
+4. **Start Command:** `npm start`
+5. **Environment:** Node
 
-Render automatically sets the `PORT` environment variable.
+> **Note:** If the deployment fails with "missing client/dist/index.html", it means the Build Command was left as `npm install`. Change it to `npm run build` in the Settings tab and redeploy.
 
 ## Project Structure
 
