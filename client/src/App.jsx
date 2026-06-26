@@ -55,6 +55,18 @@ export default function App() {
                     },
                 });
             }
+
+            socket.emit('question_received', { questionId: question.questionId }, (res) => {
+                if (!res?.success || !res.answerUnlockTime) return;
+
+                const current = useGameStore.getState().currentQuestion;
+                if (current?.questionId !== question.questionId) return;
+
+                setCurrentQuestion({
+                    ...current,
+                    answerUnlockTime: res.answerUnlockTime,
+                });
+            });
         });
 
         socket.on('answer_result', (result) => {

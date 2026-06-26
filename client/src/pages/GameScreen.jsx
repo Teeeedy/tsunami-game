@@ -14,6 +14,7 @@ export default function GameScreen() {
 
     const [answer, setAnswer] = useState('');
     const [timeLeft, setTimeLeft] = useState(0);
+    const [hasSubmitted, setHasSubmitted] = useState(false);
     const [showToast, setShowToast] = useState(false);
     const [toastContent, setToastContent] = useState(null);
     const [streakCooldown, setStreakCooldown] = useState(0);
@@ -27,46 +28,49 @@ export default function GameScreen() {
     const players = room?.players || [];
     const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
 
-    // Timer
+    // Timer synced to server question start time
     useEffect(() => {
         if (currentQuestion && phase === 'question') {
-            setTimeLeft(currentQuestion.timeLimit);
+            setHasSubmitted(false);
             setAnswer('');
-            const timer = setInterval(() => {
-                setTimeLeft((t) => {
-                    if (t <= 1) {
-                        clearInterval(timer);
-                        return 0;
-                    }
-                    return t - 1;
-                });
-            }, 1000);
+
+            const syncTimer = () => {
+                if (currentQuestion.questionStartTime) {
+                    const elapsed = (Date.now() - currentQuestion.questionStartTime) / 1000;
+                    setTimeLeft(Math.max(0, Math.ceil(currentQuestion.timeLimit - elapsed)));
+                } else {
+                    setTimeLeft(currentQuestion.timeLimit);
+                }
+            };
+
+            syncTimer();
+            const timer = setInterval(syncTimer, 250);
             return () => clearInterval(timer);
         }
     }, [currentQuestion, phase]);
 
-    // Streak cooldown countdown
+    // Streak cooldown synced to when this player can answer
     useEffect(() => {
-        if (currentQuestion?.streakDelay && currentQuestion.streakDelay > 0) {
-            setStreakCooldown(currentQuestion.streakDelay);
-        } else {
-            setStreakCooldown(0);
+        if (!currentQuestion?.answerUnlockTime) {
+            if (currentQuestion?.streakDelay > 0) {
+                setStreakCooldown(currentQuestion.streakDelay);
+            } else {
+                setStreakCooldown(0);
+            }
+            return;
         }
-    }, [currentQuestion]);
 
-    useEffect(() => {
-        if (streakCooldown <= 0) return;
-        const timer = setInterval(() => {
-            setStreakCooldown((prev) => {
-                if (prev <= 1) {
-                    clearInterval(timer);
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
+        const syncCooldown = () => {
+            const remaining = Math.ceil(
+                (currentQuestion.answerUnlockTime - Date.now()) / 1000
+            );
+            setStreakCooldown(Math.max(0, remaining));
+        };
+
+        syncCooldown();
+        const timer = setInterval(syncCooldown, 250);
         return () => clearInterval(timer);
-    }, [streakCooldown > 0]);
+    }, [currentQuestion?.answerUnlockTime, currentQuestion?.streakDelay]);
 
     // Show toast on card flip
     useEffect(() => {
@@ -82,14 +86,18 @@ export default function GameScreen() {
     }, [lastCardResult]);
 
     const handleSubmitAnswer = useCallback(() => {
-        if (!answer.trim()) return;
-        socket.emit('submit_answer', { answer: answer.trim() }, (res) => {
-            if (res && !res.success) {
-                // Already answered or phase changed
+        if (!answer.trim() || !currentQuestion?.questionId) return;
+        socket.emit(
+            'submit_answer',
+            { answer: answer.trim(), questionId: currentQuestion.questionId },
+            (res) => {
+                if (res?.success) {
+                    setHasSubmitted(true);
+                }
             }
-        });
+        );
         setAnswer('');
-    }, [answer]);
+    }, [answer, currentQuestion?.questionId]);
 
     const handlePickCard = (index) => {
         if (!isMyTurn || phase !== 'picking') return;
@@ -136,12 +144,13 @@ export default function GameScreen() {
         ? (timeLeft / currentQuestion.timeLimit) * 100
         : 0;
 
-    const hasAnswered =
-        answerResult && (answerResult.correct || answerResult.playerId === myId);
-    const someoneAnsweredCorrectly = answerResult?.correct && answerResult.playerId;
-    const showCorrectAnswer =
-        answerResult?.timeout ||
-        (someoneAnsweredCorrectly && answerResult.playerId !== myId);
+    const waitingForOthers =
+        hasSubmitted && phase === 'question' && !answerResult?.resolved;
+    const myWrongAnswer =
+        answerResult?.correct === false &&
+        answerResult.playerId === myId &&
+        !answerResult?.resolved;
+    const showCorrectAnswer = answerResult?.resolved && answerResult.correctAnswer;
 
     return (
         <div className="game-container">
@@ -176,6 +185,13 @@ export default function GameScreen() {
                 <div className="game-main">
                     {/* Trivia section */}
                     <div className="glass-panel trivia-panel">
+                        {answerResult?.resolved && answerResult.correctAnswer && phase !== 'question' && (
+                            <div className="correct-answer-bar" style={{ marginBottom: 12 }}>
+                                Answer: <span>{answerResult.correctAnswer}</span>
+                                {answerResult.playerName && ` — ${answerResult.playerName} got it!`}
+                            </div>
+                        )}
+
                         {phase === 'question' && currentQuestion && (
                             <>
                                 <div className="timer-text">{timeLeft}s remaining</div>
@@ -186,7 +202,7 @@ export default function GameScreen() {
                                     />
                                 </div>
                                 <div className="question-text">{currentQuestion.questionText}</div>
-                                {!hasAnswered && streakCooldown > 0 && (
+                                {!hasSubmitted && streakCooldown > 0 && (
                                     <div className="streak-cooldown">
                                         <span>🔥 Streak delay! You can answer in <strong>{streakCooldown}s</strong></span>
                                         <div className="streak-bar-container">
@@ -197,7 +213,7 @@ export default function GameScreen() {
                                         </div>
                                     </div>
                                 )}
-                                {!hasAnswered && streakCooldown <= 0 && (
+                                {!hasSubmitted && streakCooldown <= 0 && (
                                     <div className="answer-row">
                                         <input
                                             className="input"
@@ -218,9 +234,14 @@ export default function GameScreen() {
                                         </button>
                                     </div>
                                 )}
-                                {answerResult?.correct === false && answerResult.playerId === myId && (
+                                {waitingForOthers && (
+                                    <p style={{ color: 'var(--accent-blue)', marginTop: 8, fontSize: '0.9rem' }}>
+                                        ⏳ Answer submitted — waiting for other players...
+                                    </p>
+                                )}
+                                {myWrongAnswer && (
                                     <p style={{ color: 'var(--accent-red)', marginTop: 8, fontSize: '0.9rem' }}>
-                                        ✗ Wrong answer! Wait for the next question.
+                                        ✗ Wrong answer! Waiting for other players...
                                     </p>
                                 )}
                                 {showCorrectAnswer && answerResult.correctAnswer && (

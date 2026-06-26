@@ -70,6 +70,37 @@ function generateDeck() {
     return cards.map((card) => ({ ...card, flipped: false }));
 }
 
+/**
+ * Answer delay (seconds) based on correct-answer streak.
+ * 0-1 streak → 0s, 2 → 2s, 3 → 3s, 4+ → 4s (capped)
+ */
+function getStreakDelay(streak) {
+    if (streak <= 1) return 0;
+    return Math.min(streak, 4);
+}
+
+function getEffectiveAnswerStart(gs, playerId) {
+    const streak = gs.streaks[playerId] || 0;
+    const delayMs = getStreakDelay(streak) * 1000;
+    const readyTime = gs.playerReadyTimes?.[playerId] || gs.questionStartTime;
+    return readyTime + delayMs;
+}
+
+function canPlayerAnswer(gs, playerId) {
+    if (!gs.questionStartTime) return false;
+    return Date.now() >= getEffectiveAnswerStart(gs, playerId);
+}
+
+function getResponseTime(gs, playerId) {
+    return Date.now() - getEffectiveAnswerStart(gs, playerId);
+}
+
+function pickFastestCorrectSubmission(submissions) {
+    return submissions
+        .filter((s) => s.correct)
+        .sort((a, b) => a.responseTime - b.responseTime)[0] || null;
+}
+
 function initGameState(room) {
     const board = generateDeck();
     room.gameState = {
@@ -79,7 +110,10 @@ function initGameState(room) {
         phase: 'question', // question | picking | resolving | target_select
         activeModifier: null, // 'double' | 'reverse' | null
         questionIndex: 0,
+        questionId: 0,
         answeredPlayers: new Set(),
+        questionSubmissions: [],
+        playerReadyTimes: {},
         questionTimeout: null,
         streaks: {}, // playerId -> consecutive correct answer count
         questionStartTime: null, // timestamp when question was sent
@@ -367,4 +401,9 @@ module.exports = {
     initGameState,
     applyCardEffect,
     cardRequiresTarget,
+    getStreakDelay,
+    getEffectiveAnswerStart,
+    canPlayerAnswer,
+    getResponseTime,
+    pickFastestCorrectSubmission,
 };

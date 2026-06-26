@@ -12,19 +12,93 @@ const {
     updateSettings,
     sanitizeRoom,
 } = require('./rooms');
-const { initGameState, applyCardEffect, cardRequiresTarget } = require('./gameLogic');
+const {
+    initGameState,
+    applyCardEffect,
+    cardRequiresTarget,
+    getStreakDelay,
+    getEffectiveAnswerStart,
+    canPlayerAnswer,
+    getResponseTime,
+    pickFastestCorrectSubmission,
+} = require('./gameLogic');
 const { getNextQuestion, checkAnswer, addTrivia, editTrivia, deleteTrivia } = require('./trivia');
 
 // Map socketId → { roomCode, playerId }
 const socketMap = new Map();
 
-/**
- * Calculate answer delay (in seconds) based on correct-answer streak.
- * 0-1 streak → 0s, 2 → 2s, 3 → 3s, 4+ → 4s (capped)
- */
-function getStreakDelay(streak) {
-    if (streak <= 1) return 0;
-    return Math.min(streak, 4);
+function getConnectedPlayerIds(io, room) {
+    const roomSockets = io.sockets.adapter.rooms.get(room.code);
+    if (!roomSockets) return [];
+
+    return room.players
+        .filter((p) => p.connected && roomSockets.has(p.id))
+        .map((p) => p.id);
+}
+
+function tryResolveQuestion(io, room) {
+    const gs = room.gameState;
+    if (!gs || gs.phase !== 'question') return;
+
+    const connectedIds = getConnectedPlayerIds(io, room);
+    if (connectedIds.length === 0) return;
+
+    const allAnswered = connectedIds.every((id) => gs.answeredPlayers.has(id));
+    if (allAnswered) {
+        resolveQuestion(io, room);
+    }
+}
+
+function resolveQuestion(io, room) {
+    const gs = room.gameState;
+    if (!gs || gs.phase !== 'question') return;
+
+    if (gs.questionTimeout) {
+        clearTimeout(gs.questionTimeout);
+        gs.questionTimeout = null;
+    }
+
+    const winnerSubmission = pickFastestCorrectSubmission(gs.questionSubmissions || []);
+    const correctAnswer = gs.currentQuestion.correctAnswer;
+
+    if (winnerSubmission) {
+        gs.turnPlayerId = winnerSubmission.playerId;
+        gs.phase = 'picking';
+
+        gs.streaks[winnerSubmission.playerId] =
+            (gs.streaks[winnerSubmission.playerId] || 0) + 1;
+        room.players.forEach((p) => {
+            if (p.id !== winnerSubmission.playerId) {
+                gs.streaks[p.id] = 0;
+            }
+        });
+
+        const player = room.players.find((p) => p.id === winnerSubmission.playerId);
+
+        io.to(room.code).emit('answer_result', {
+            correct: true,
+            resolved: true,
+            playerId: winnerSubmission.playerId,
+            playerName: player ? player.name : 'Unknown',
+            correctAnswer,
+            responseTime: winnerSubmission.responseTime,
+        });
+        io.to(room.code).emit('lobby_updated', sanitizeRoom(room));
+        return;
+    }
+
+    io.to(room.code).emit('answer_result', {
+        correct: false,
+        resolved: true,
+        timeout: (gs.questionSubmissions || []).length === 0,
+        correctAnswer,
+    });
+
+    setTimeout(() => {
+        if (room.gameState && room.status === 'playing') {
+            sendQuestion(io, room);
+        }
+    }, 2000);
 }
 
 function registerHandlers(io) {
@@ -169,7 +243,7 @@ function registerHandlers(io) {
             sendQuestion(io, room);
         });
 
-        socket.on('submit_answer', ({ answer }, callback) => {
+        socket.on('question_received', ({ questionId }, callback) => {
             const info = socketMap.get(socket.id);
             const cb = callback || (() => { });
             if (!info) return cb({ success: false, error: 'Not in a room' });
@@ -178,19 +252,37 @@ function registerHandlers(io) {
             if (!room || !room.gameState) return cb({ success: false, error: 'No active game' });
             if (room.gameState.phase !== 'question')
                 return cb({ success: false, error: 'Not in question phase' });
+            if (questionId !== room.gameState.questionId)
+                return cb({ success: false, error: 'Stale question' });
+
+            if (!room.gameState.playerReadyTimes[socket.id]) {
+                room.gameState.playerReadyTimes[socket.id] = Date.now();
+            }
+
+            cb({
+                success: true,
+                answerUnlockTime: getEffectiveAnswerStart(room.gameState, socket.id),
+            });
+        });
+
+        socket.on('submit_answer', ({ answer, questionId }, callback) => {
+            const info = socketMap.get(socket.id);
+            const cb = callback || (() => { });
+            if (!info) return cb({ success: false, error: 'Not in a room' });
+
+            const room = getRoom(info.roomCode);
+            if (!room || !room.gameState) return cb({ success: false, error: 'No active game' });
+            if (room.gameState.phase !== 'question')
+                return cb({ success: false, error: 'Not in question phase' });
+            if (questionId !== room.gameState.questionId)
+                return cb({ success: false, error: 'Stale question' });
 
             // Check if player already answered
             if (room.gameState.answeredPlayers.has(socket.id))
                 return cb({ success: false, error: 'Already answered' });
 
-            // Enforce streak delay
-            const streak = room.gameState.streaks[socket.id] || 0;
-            const delay = getStreakDelay(streak);
-            if (delay > 0 && room.gameState.questionStartTime) {
-                const elapsed = Date.now() - room.gameState.questionStartTime;
-                if (elapsed < delay * 1000) {
-                    return cb({ success: false, error: 'Streak cooldown active — wait a moment!' });
-                }
+            if (!canPlayerAnswer(room.gameState, socket.id)) {
+                return cb({ success: false, error: 'Streak cooldown active — wait a moment!' });
             }
 
             room.gameState.answeredPlayers.add(socket.id);
@@ -200,43 +292,27 @@ function registerHandlers(io) {
                 answer
             );
 
+            const submission = {
+                playerId: socket.id,
+                answer,
+                correct,
+                responseTime: getResponseTime(room.gameState, socket.id),
+                answerTime: Date.now(),
+            };
+            room.gameState.questionSubmissions.push(submission);
+
             if (correct) {
-                // Clear timeout
-                if (room.gameState.questionTimeout) {
-                    clearTimeout(room.gameState.questionTimeout);
-                    room.gameState.questionTimeout = null;
-                }
-
-                room.gameState.turnPlayerId = socket.id;
-                room.gameState.phase = 'picking';
-
-                const player = room.players.find((p) => p.id === socket.id);
-                const playerName = player ? player.name : 'Unknown';
-
-                cb({ success: true, correct: true });
-                io.to(info.roomCode).emit('answer_result', {
-                    correct: true,
-                    playerId: socket.id,
-                    playerName,
-                    correctAnswer: room.gameState.currentQuestion.correctAnswer,
-                });
-
-                // Update streaks: increment for winner, reset everyone else
-                room.gameState.streaks[socket.id] = (room.gameState.streaks[socket.id] || 0) + 1;
-                room.players.forEach((p) => {
-                    if (p.id !== socket.id) {
-                        room.gameState.streaks[p.id] = 0;
-                    }
-                });
-
-                io.to(info.roomCode).emit('lobby_updated', sanitizeRoom(room));
+                cb({ success: true, correct: true, waiting: true });
             } else {
-                cb({ success: true, correct: false });
+                cb({ success: true, correct: false, waiting: true });
                 socket.emit('answer_result', {
                     correct: false,
                     playerId: socket.id,
+                    waiting: true,
                 });
             }
+
+            tryResolveQuestion(io, room);
         });
 
         socket.on('pick_card', ({ cardIndex, targetPlayerId }, callback) => {
@@ -466,22 +542,26 @@ function sendQuestion(io, room) {
     }
 
     const question = getNextQuestion(room);
+    room.gameState.questionId = (room.gameState.questionId || 0) + 1;
     room.gameState.currentQuestion = question;
     room.gameState.answeredPlayers = new Set();
+    room.gameState.questionSubmissions = [];
+    room.gameState.playerReadyTimes = {};
     room.gameState.turnPlayerId = null;
     room.gameState.phase = 'question';
 
     console.log('[Game] ✅ Emitting trivia_question:', {
         roomCode: room.code,
+        questionId: room.gameState.questionId,
         questionText: question.questionText,
         timeLimit: question.timeLimit,
         connectedClients: io.sockets.adapter.rooms.get(room.code)?.size
     });
 
-    io.to(room.code).emit('lobby_updated', sanitizeRoom(room));
-
-    // Record when the question was sent for streak delay enforcement
+    // Record when the question was sent before emitting to clients
     room.gameState.questionStartTime = Date.now();
+
+    io.to(room.code).emit('lobby_updated', sanitizeRoom(room));
 
     // Send per-player streak delay along with the question
     const roomSockets = io.sockets.adapter.rooms.get(room.code);
@@ -490,8 +570,10 @@ function sendQuestion(io, room) {
             const streak = room.gameState.streaks[sid] || 0;
             const streakDelay = getStreakDelay(streak);
             io.to(sid).emit('trivia_question', {
+                questionId: room.gameState.questionId,
                 questionText: question.questionText,
                 timeLimit: question.timeLimit,
+                questionStartTime: room.gameState.questionStartTime,
                 streakDelay,
                 streak,
             });
@@ -500,18 +582,10 @@ function sendQuestion(io, room) {
 
     console.log('[Game] Question emitted successfully');
 
-    // Auto-skip if nobody answers in time
+    // Resolve when time runs out — winner is fastest correct answer among submissions
     room.gameState.questionTimeout = setTimeout(() => {
         if (room.gameState && room.gameState.phase === 'question') {
-            io.to(room.code).emit('answer_result', {
-                correct: false,
-                timeout: true,
-                correctAnswer: question.correctAnswer,
-            });
-            // Send next question
-            setTimeout(() => {
-                sendQuestion(io, room);
-            }, 2000);
+            resolveQuestion(io, room);
         }
     }, (question.timeLimit + 1) * 1000);
 }
